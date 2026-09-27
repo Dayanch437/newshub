@@ -1,0 +1,51 @@
+{% extends 'news/base.html' %}
+{% load ui %}
+
+{% block content %}
+<section class="toolbar">
+  <h1>{% if query %}{% t 'results_for' %} “{{ query }}”{% else %}{% t 'latest' %}{% endif %}</h1>
+  <form class="search" method="get">
+    {% if current_category %}<input type="hidden" name="category" value="{{ current_category }}">{% endif %}
+    <input type="search" name="q" value="{{ query }}" placeholder="{% t 'search_placeholder' %}" aria-label="{% t 'search' %}">
+    <select name="source" onchange="this.form.submit()" aria-label="{% t 'source' %}">
+      <option value="">{% t 'all_sources' %}</option>
+      {% for s in sources %}
+        <option value="{{ s.pk }}" {% if current_source == s.pk|stringformat:'d' %}selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</section>
+
+<nav class="chips" aria-label="Categories">
+  <a href="{% query_with category='' %}" class="chip {% if not current_category %}active{% endif %}">{% t 'all' %}</a>
+  {% for c in categories %}
+    <a href="{% query_with category=c.slug %}" class="chip {% if current_category == c.slug %}active{% endif %}">{{ c.name }}</a>
+  {% endfor %}
+</nav>
+
+{% if article_list %}
+  <div class="grid">
+    {% for a in article_list %}
+      <article class="card">
+        <div class="meta">
+          {% if a.category %}<span class="tag-cat">{{ a.category.name }}</span>{% endif %}
+          <span>{{ a.source.name|default:'' }}</span>
+          {% if a.published_at %}<time datetime="{{ a.published_at|date:'c' }}">{{ a.published_at|date:'d.m.Y H:i' }}</time>{% endif %}
+        </div>
+        <h2><a href="{{ a.get_absolute_url }}">{{ a.display_title }}</a></h2>
+        <p>{{ a.display_summary|default:''|truncatewords:45 }}</p>
+      </article>
+    {% endfor %}
+  </div>
+
+  {% if is_paginated %}
+    <nav class="pager">
+      {% if page_obj.has_previous %}<a href="{% query_with page=page_obj.previous_page_number %}">← {% t 'previous' %}</a>{% else %}<span></span>{% endif %}
+      <span>{% t 'page' %} {{ page_obj.number }} {% t 'of' %} {{ paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="{% query_with page=page_obj.next_page_number %}">{% t 'next' %} →</a>{% else %}<span></span>{% endif %}
+    </nav>
+  {% endif %}
+{% else %}
+  <p class="empty">{% t 'no_news' %}</p>
+{% endif %}
+{% endblock %}

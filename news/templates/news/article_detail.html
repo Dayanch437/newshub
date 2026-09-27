@@ -1,0 +1,35 @@
+{% extends 'news/base.html' %}
+{% load i18n ui %}
+
+{% block title %}{{ article.display_title }} · NewsHub{% endblock %}
+
+{% block content %}{% get_current_language as LANG %}
+<article class="detail">
+  <a class="back" href="{% url 'news:list' %}">← {% t 'back' %}</a>
+  <div class="meta">
+    {% if article.category %}<a class="tag-cat" href="{% url 'news:list' %}?category={{ article.category.slug }}">{{ article.category.name }}</a>{% endif %}
+    <span>{{ article.source.name|default:'' }}</span>
+    {% if article.published_at %}<time datetime="{{ article.published_at|date:'c' }}">{{ article.published_at|date:'d.m.Y H:i' }}</time>{% endif %}
+  </div>
+  <h1>{{ article.display_title }}</h1>
+
+  {% if LANG == 'tk' and not article.summary_tk %}<p class="notice">{% t 'tk_pending' %}</p>{% endif %}
+
+  {% if article.image_url %}<img class="hero" src="{{ article.image_url }}" alt="" loading="lazy">{% endif %}
+
+  {% if article.display_summary %}
+    <div class="summary">{{ article.display_summary|linebreaks }}</div>
+  {% else %}
+    <p class="empty">{% t 'no_summary' %}</p>
+  {% endif %}
+
+  {% if article.tags %}
+    <div class="tags">
+      <span>{% t 'tags' %}:</span>
+      {% for tag in article.tags %}<a href="{% url 'news:list' %}?q={{ tag|urlencode }}">#{{ tag }}</a>{% endfor %}
+    </div>
+  {% endif %}
+
+  <a class="original" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">{% t 'read_original' %} ↗</a>
+</article>
+{% endblock %}

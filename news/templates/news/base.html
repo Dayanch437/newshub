@@ -1,0 +1,26 @@
+{% load static i18n ui %}{% get_current_language as LANG %}<!doctype html>
+<html lang="{{ LANG }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NewsHub{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'news/style.css' %}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-row">
+      <a class="brand" href="{% url 'news:list' %}">News<span>Hub</span></a>
+      <form class="lang-switch" action="{% url 'set_language' %}" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button name="language" value="en" {% if LANG == 'en' %}class="active" aria-current="true"{% endif %}>EN</button>
+        <button name="language" value="tk" {% if LANG == 'tk' %}class="active" aria-current="true"{% endif %}>TK</button>
+      </form>
+    </div>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="wrap site-footer">{% t 'tagline' %}</footer>
+</body>
+</html>

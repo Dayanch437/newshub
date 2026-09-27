@@ -1,0 +1,5 @@
+asgiref==3.12.1
+Django==6.1.1
+djangorestframework==3.18.1
+feedparser==6.0.14
+sqlparse==0.6.0
