@@ -1,0 +1,289 @@
+{
+  "id": "newshubCollect01",
+  "name": "NewsHub: collect and summarize",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "name": "Every 3 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8000/api/sources/",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "name": "Get sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "newshubApiCred",
+          "name": "NewsHub API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.feed_url }}",
+        "options": {}
+      },
+      "name": "Read feed",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep the newest articles from each feed and clean up the fields.\nconst PER_FEED = 5;\nconst bySource = {};\n\n$input.all().forEach((item, i) => {\n  const e = item.json;\n  if (!e.link || !e.title) return;\n  let source = null;\n  try { source = $('Get sources').itemMatching(i).json.id; } catch (err) {}\n  const text = String(e.contentSnippet || e.content || '')\n    .replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 3000);\n  (bySource[source] ??= []).push({\n    url: e.link,\n    title: e.title.trim(),\n    content: text,\n    published_at: e.isoDate || null,\n    source,\n    image_url: (e.enclosure && e.enclosure.url) || '',\n  });\n});\n\nconst articles = Object.values(bySource).flatMap(list =>\n  list.sort((a, b) => String(b.published_at).localeCompare(String(a.published_at))).slice(0, PER_FEED));\n\nreturn [{ json: { articles } }];\n"
+      },
+      "name": "Keep newest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/articles/check/",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ urls: $json.articles.map(a => a.url) }) }}"
+      },
+      "name": "Check new URLs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "newshubApiCred",
+          "name": "NewsHub API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only articles Django doesn't have yet, and build the Ollama request for each.\nconst MODEL = 'qwen3:0.6b';  // switch to 'qwen3:1.7b' once it is downloaded\n\nconst articles = $('Keep newest').first().json.articles;\nconst fresh = new Set($json.new);\n\nreturn articles.filter(a => fresh.has(a.url)).map(a => ({\n  json: {\n    article: a,\n    ollama_body: {\n      model: MODEL,\n      stream: false,\n      think: false,\n      format: 'json',\n      options: { temperature: 0.2, num_ctx: 2048 },\n      prompt: `Summarize this news article for a news website.\nUse ONLY facts stated in the text. Do not add opinions, predictions or background.\nReturn JSON with keys:\n\"summary\": 2-3 sentences in English,\n\"category\": one of world, politics, business, technology, science, health, sports, culture, central-asia, other\n  (central-asia = anything about Turkmenistan, Kazakhstan, Kyrgyzstan, Tajikistan, Uzbekistan;\n   health = medicine, drugs, vaccines, FDA; politics = governments, elections, officials),\n\"tags\": 3-5 short lowercase keywords.\n\nTitle: ${a.title}\nText: ${a.content || a.title}`,\n    },\n  },\n}));\n"
+      },
+      "name": "Only new",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/generate",
+        "options": {
+          "timeout": 300000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollama_body) }}"
+      },
+      "name": "Summarize (Ollama)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge the AI result into the article. If the model failed, save the article without a summary.\nconst originals = $('Only new').all();\n\nreturn $input.all().map((item, i) => {\n  const article = { ...originals[i].json.article };\n  let ai = {};\n  try { ai = JSON.parse(item.json.response || '{}'); } catch (err) {}\n  article.summary_en = typeof ai.summary === 'string' ? ai.summary.trim() : '';\n  article.category = typeof ai.category === 'string' ? ai.category : 'other';\n  article.tags = Array.isArray(ai.tags) ? ai.tags.filter(t => typeof t === 'string') : [];\n  return { json: article };\n});\n"
+      },
+      "name": "Build article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/articles/",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Save to Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "newshubApiCred",
+          "name": "NewsHub API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 3 hours": {
+      "main": [
+        [
+          {
+            "node": "Get sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Get sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get sources": {
+      "main": [
+        [
+          {
+            "node": "Read feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read feed": {
+      "main": [
+        [
+          {
+            "node": "Keep newest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep newest": {
+      "main": [
+        [
+          {
+            "node": "Check new URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check new URLs": {
+      "main": [
+        [
+          {
+            "node": "Only new",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only new": {
+      "main": [
+        [
+          {
+            "node": "Summarize (Ollama)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize (Ollama)": {
+      "main": [
+        [
+          {
+            "node": "Build article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build article": {
+      "main": [
+        [
+          {
+            "node": "Save to Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
